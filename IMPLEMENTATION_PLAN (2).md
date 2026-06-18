@@ -427,39 +427,50 @@ Status key: `[ ]` Not started · `[~]` In progress · `[x]` Done
 
 #### Task Group 5 — AI Tools Service
 
-- [ ] Create `AIToolsService.java` (`@Service`)
-  - [ ] Inject `ChatClient` and `PromptBuilder`
-  - [ ] Implement `fetchTrendingTool()`:
-    - [ ] Build system + user prompts via `PromptBuilder`
-    - [ ] Configure `web_search_20250305` built-in tool in request options
-    - [ ] Call `ChatClient`, collect response
-    - [ ] Extract text content from response blocks
-    - [ ] Isolate JSON object using regex: `\{[\s\S]*\}`
-    - [ ] Deserialise to `AITool` via `ObjectMapper`
-    - [ ] Throw `AIToolsFetchException` on empty response, parse failure, or missing required fields
-- [ ] Unit test `AIToolsServiceTest`
-  - [ ] Stub `ChatClient` returning a valid JSON object → assert correct `AITool` fields
-  - [ ] Stub returning surrounding preamble text → assert JSON extraction still works
-  - [ ] Stub returning malformed JSON → assert `AIToolsFetchException` is thrown
-  - [ ] Stub returning empty string → assert `AIToolsFetchException` is thrown
+- [x] Create `AIToolsService.java` (`@Service`)
+  - [x] Inject `ChatClient`, `PromptBuilder`, and `ObjectMapper` via constructor
+  - [x] Implement `fetchTrendingTool()`:
+    - [x] Build system + user prompts via `PromptBuilder`
+    - [x] Configure web-search tool name via `${app.ai.web-search-tool-name}` — **NOTE:** Spring AI 1.0.1 does not expose a native API for Anthropic's built-in server-side tools (`AnthropicApi.Tool` has no `type` field; string `web_search` is absent from the jar). Property is kept for observability and future upgrade; a `WARN` log is emitted on every run
+    - [x] Call `ChatClient` fluent API: `.prompt().system().user().call().content()`
+    - [x] Guard against null/blank response — throw `AIToolsFetchException("AI returned empty response")`
+    - [x] Two-attempt JSON extraction: fast-path direct parse if response starts with `{`; regex fallback `\{[\s\S]*\}` (DOTALL, greedy) for preamble/markdown-fence cases
+    - [x] Deserialise to `AITool` via `ObjectMapper`
+    - [x] Field validation — collect all missing fields in one pass and throw `AIToolsFetchException` listing them all
+    - [x] Throw `AIToolsFetchException` (wrapping cause) on ChatClient exception, parse failure, or missing required fields
+- [x] Extensive logging: `INFO` on fetch start/complete; `WARN` on web-search tool limitation; `DEBUG` on prompt sizes, raw response, extracted JSON; `ERROR` with full context on every failure path
+- [x] **Tests:** `AIToolsServiceTest` (28 tests)
+  - [x] Stub `ChatClient` fluent chain via Mockito mocks of `ChatClient`, `ChatClientRequestSpec`, `CallResponseSpec`
+  - [x] Valid JSON → correct `AITool` fields, null link allowed, unknown fields ignored
+  - [x] JSON with preamble / trailing text / both / markdown fences → extraction still works (4 tests)
+  - [x] Empty, blank, null response → `AIToolsFetchException` with "empty" message
+  - [x] Response with no `{…}` → `AIToolsFetchException` with "No JSON object found"
+  - [x] Malformed JSON (4 variants) → `AIToolsFetchException` (parametrized)
+  - [x] Missing each required field individually + multiple fields at once → `AIToolsFetchException` listing missing fields
+  - [x] `ChatClient` throws `RuntimeException` / `IllegalStateException` → wrapped `AIToolsFetchException`
+  - [x] Interaction verification: system prompt passed, user prompt passed, `LocalDate.now()` used, chain called exactly once
 
 ---
 
 #### Task Group 6 — Email Service
 
-- [ ] Create `EmailService.java` (`@Service`)
-  - [ ] Inject `JavaMailSender`; read `app.email.from` and `app.email.to` from `@Value`
-  - [ ] Implement `send(AITool tool)`:
-    - [ ] Build subject string with tool name and current time
-    - [ ] Build HTML body string using `StringBuilder` as per §2.7 layout
-    - [ ] Create `MimeMessage` via `JavaMailSender.createMimeMessage()`
-    - [ ] Set from, to, subject, HTML body via `MimeMessageHelper`
-    - [ ] Call `JavaMailSender.send()`
-    - [ ] Log success and failure; throw `EmailSendException` (runtime) on `MailException`
-- [ ] Unit test `EmailServiceTest`
-  - [ ] Use `JavaMailSenderImpl` with a `MockTransport` or Spring's `JavaMailSenderStub`
-  - [ ] Assert `MimeMessage` subject contains tool name
-  - [ ] Assert body contains `tool.name()`, `tool.description()`, at least one pro, at least one con
+- [x] Create `EmailSendException.java` (RuntimeException, 2 constructors)
+- [x] Create `EmailService.java` (`@Service`)
+  - [x] Constructor injection: `JavaMailSender`, `@Value("${app.email.from}")`, `@Value("${app.email.to}")` — avoids `ReflectionTestUtils` in tests
+  - [x] `send(AITool tool)` public method:
+    - [x] Captures `LocalDateTime.now()` at method entry for consistent subject + header date
+    - [x] Subject format: `🤖 AI Tool Spotlight — {name} [HH:mm]`
+    - [x] HTML body built with `StringBuilder` per §2.7 layout — header banner, category badge, name, description, ✅ Pros, ⚠️ Cons, "Visit Tool →" button (only when link is non-null/non-blank), footer branding
+    - [x] Inline CSS throughout for email-client compatibility (no Thymeleaf)
+    - [x] `htmlEscape()` helper prevents XSS in AI-supplied text fields
+    - [x] `MimeMessageHelper(message, false, "UTF-8")` — non-multipart HTML
+    - [x] Throws `EmailSendException` wrapping cause on both `MailException` (transport) and `MessagingException` (MIME construction)
+  - [x] Extensive logging: `INFO` on service init, send start, send success; `DEBUG` on subject, from/to, HTML size, MimeMessage assembly; `ERROR` with full cause on both failure paths
+- [x] Package-private helpers (`buildSubject`, `buildHtml`) for direct unit-test access
+- [x] **Tests:** `EmailSendExceptionTest` (8 tests) + `EmailServiceTest` (28 tests) — total 36
+  - [x] `EmailSendExceptionTest`: message-only constructor, message+cause constructor, is-RuntimeException, throwable from both constructors
+  - [x] `EmailServiceTest`: subject contains tool name / "AI Tool Spotlight" / robot emoji / `[HH:mm]` bracket; setFrom/setTo address assertions; `buildHtml` asserts for name, category, description, all pros, all cons, link present, no Visit button when link null, header date, header time, valid HTML document structure, footer branding, HTML escaping of `<`, `>`, `&`, `'`, `"` in tool fields; `buildSubject` helper assertions; `MailException` → `EmailSendException` (thrown + cause preserved); `MessagingException` → `EmailSendException` (thrown + cause preserved) via anonymous `MimeMessage` subclass override; `createMimeMessage` called once; `send` called once; no-link tool still sends
+  - [x] `@MockitoSettings(strictness = Strictness.LENIENT)` to allow shared `@BeforeEach` stub for tests that exercise helpers directly without calling `send()`
 
 ---
 
@@ -638,4 +649,4 @@ This is the final milestone that brings the MVP all the way to the extensible pl
 
 ---
 
-*Last updated: 2026-06-17. Task Groups 1–4 complete (51 tests, ≥ 80% coverage). Task Groups 5–9 pending.*
+*Last updated: 2026-06-18. Task Groups 1–6 complete (115 tests, ≥ 80% line + branch coverage). Task Groups 7–9 pending.*
