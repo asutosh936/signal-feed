@@ -1,0 +1,28 @@
+spring:
+  mail:
+    host: smtp.gmail.com
+    port: 465
+    username: ${MAIL_USERNAME}
+    password: ${MAIL_PASSWORD}
+    properties:
+      mail.smtp.ssl.enable: true
+
+app:
+  email:
+    from: ${MAIL_USERNAME}
+    to: ${MAIL_TO}
+  ai:
+    # Overridden per provider in application-<profile>.yml
+    model: ""
+    max-tokens: 500
+    # The built-in web-search tool identifier for the active provider.
+    # Overridden per provider in application-<profile>.yml
+    web-search-tool-name: ""
+
+scheduler:
+  cron:
+    run1: "0 30 2 * * *"
+    run2: "0 30 5 * * *"
+    run3: "0 30 8 * * *"
+    run4: "0 30 11 * * *"
+    run5: "0 30 14 * * *"

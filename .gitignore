@@ -1,0 +1,30 @@
+# ── Build output ──────────────────────────────────────────────────────────────
+target/
+
+# ── Secrets — NEVER commit these ─────────────────────────────────────────────
+.env
+*.env
+!.env.example
+
+# ── Local config overrides ────────────────────────────────────────────────────
+application-local.yml
+application-local.properties
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.idea/
+*.iml
+*.iws
+*.ipr
+.eclipse/
+.classpath
+.project
+.settings/
+*.factorypath
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/

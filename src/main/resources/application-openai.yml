@@ -1,0 +1,15 @@
+spring:
+  ai:
+    openai:
+      api-key: ${OPENAI_API_KEY}
+      chat:
+        options:
+          model: ${app.ai.model}
+          max-tokens: ${app.ai.max-tokens}
+
+app:
+  ai:
+    model: gpt-4o
+    # OpenAI uses 'web_search_preview' as the built-in search tool name.
+    # Requires a model that supports web search (e.g. gpt-4o-search-preview).
+    web-search-tool-name: web_search_preview

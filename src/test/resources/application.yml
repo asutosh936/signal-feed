@@ -1,0 +1,25 @@
+spring:
+  mail:
+    host: localhost
+    port: 2525
+    username: test@example.com
+    password: test-password
+    properties:
+      mail.smtp.ssl.enable: false
+
+app:
+  email:
+    from: test@example.com
+    to: recipient@example.com
+  ai:
+    model: test-model
+    max-tokens: 500
+    web-search-tool-name: web_search_test
+
+scheduler:
+  cron:
+    run1: "0 30 2 * * *"
+    run2: "0 30 5 * * *"
+    run3: "0 30 8 * * *"
+    run4: "0 30 11 * * *"
+    run5: "0 30 14 * * *"

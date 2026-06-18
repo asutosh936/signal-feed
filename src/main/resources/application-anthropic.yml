@@ -1,0 +1,13 @@
+spring:
+  ai:
+    anthropic:
+      api-key: ${ANTHROPIC_API_KEY}
+      chat:
+        options:
+          model: ${app.ai.model}
+          max-tokens: ${app.ai.max-tokens}
+
+app:
+  ai:
+    model: claude-sonnet-4-6
+    web-search-tool-name: web_search_20250305
