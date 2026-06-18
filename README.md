@@ -152,19 +152,21 @@ All configuration lives in `src/main/resources/application.yml`. Secrets are inj
 
 | Key | Default | Description |
 |---|---|---|
-| `spring.ai.anthropic.chat.options.model` | `claude-sonnet-4-6` | Claude model used for tool discovery |
-| `spring.ai.anthropic.chat.options.max-tokens` | `500` | Max tokens per Claude response |
+| `spring.ai.anthropic.chat.options.model` | `claude-sonnet-4-6` | Claude model (Anthropic profile) |
+| `spring.ai.anthropic.chat.options.max-tokens` | `500` | Max tokens per response |
+| `spring.ai.openai.chat.options.model` | `gpt-4o` | OpenAI model (OpenAI profile) |
 | `spring.mail.host` | `smtp.gmail.com` | SMTP host |
 | `spring.mail.port` | `465` | SMTP port (SSL) |
-| `scheduler.cron.run1–5` | See above | Cron expressions for the 5 daily runs |
+| `app.ai.web-search-tool-name` | `web_search_20250305` (Anthropic) | Reserved for future Spring AI upgrade |
+| `scheduler.cron.run1–5` | See schedule table | Cron expressions for the 5 daily runs (UTC) |
 
 ---
 
 ## Known Limitations (MVP)
 
-- No deduplication — the same tool may appear across multiple emails
-- No retry logic — a failed run is logged and skipped
-- No persistence — fully stateless, no data is written to disk
-- Claude cannot truly honour "do not repeat recent tools" without conversation history
+- **No deduplication** — the same tool may appear across multiple emails in a day or across days. Claude has no memory between runs.
+- **No retry logic** — a failed run is logged and skipped; no email is sent for that slot.
+- **No persistence** — fully stateless, no data is written to disk.
+- **Web search not active (Spring AI 1.0.1 limitation)** — Claude is instructed to use web search for trending tools, but Spring AI 1.0.1 does not expose a native API for passing Anthropic's server-side built-in tools (e.g. `web_search_20250305`) through `ChatClient`. The `app.ai.web-search-tool-name` property is kept for future upgrade. Claude therefore uses training knowledge. A `WARN` log line is emitted on every run as a reminder. To enable live search, upgrade Spring AI once built-in tool support is available.
 
-These are intentional MVP trade-offs. See the implementation plan for the post-MVP roadmap.
+These are intentional MVP trade-offs. See `IMPLEMENTATION_PLAN (2).md` for the post-MVP roadmap.
