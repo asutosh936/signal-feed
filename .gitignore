@@ -1,6 +1,11 @@
 # ── Build output ──────────────────────────────────────────────────────────────
 target/
 
+# Compiled class files — guard against accidental extraction at project root
+*.class
+META-INF/
+org/
+
 # ── Secrets — NEVER commit these ─────────────────────────────────────────────
 .env
 *.env
@@ -20,11 +25,20 @@ application-local.properties
 .project
 .settings/
 *.factorypath
+*.code-workspace
+
+# ── Claude Code workspace ─────────────────────────────────────────────────────
+.claude/
 
 # ── OS ────────────────────────────────────────────────────────────────────────
 .DS_Store
+.DS_Store?
 Thumbs.db
+ehthumbs.db
 
 # ── Logs ─────────────────────────────────────────────────────────────────────
 *.log
 logs/
+
+# ── Maven wrapper jar (not needed when using mvnw download-on-demand) ─────────
+.mvn/wrapper/maven-wrapper.jar
