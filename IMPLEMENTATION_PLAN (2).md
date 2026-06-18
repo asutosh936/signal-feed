@@ -377,41 +377,51 @@ Status key: `[ ]` Not started · `[~]` In progress · `[x]` Done
 
 #### Task Group 1 — Project Setup
 
-- [ ] Create Maven project with `spring-boot-starter-parent` 3.3.x
-- [ ] Set Java 17 compiler source and target in `pom.xml`
-- [ ] Add dependencies: `spring-boot-starter`, `spring-ai-anthropic-spring-boot-starter`, `spring-boot-starter-mail`, `spring-boot-starter-test`
-- [ ] Create `application.yml` with all config placeholders
-- [ ] Create `.env.example` documenting all required environment variables
-- [ ] Create `TrendTrackerApplication.java` with `@SpringBootApplication` and `@EnableScheduling`
-- [ ] Verify application starts with `mvn spring-boot:run` (no features yet, just clean boot)
+- [x] Create Maven project with `spring-boot-starter-parent` 3.3.5
+- [x] Set Java 17 compiler source and target in `pom.xml`
+- [x] Add dependencies: `spring-boot-starter`, `spring-ai-starter-model-anthropic` *(renamed from `spring-ai-anthropic-spring-boot-starter` in Spring AI 1.0.x — old name absent from BOM)*, `spring-boot-starter-mail`, `spring-boot-starter-test`
+- [x] Create `application.yml` with all config placeholders — split into base + `application-anthropic.yml` / `application-openai.yml` provider profiles for provider decoupling
+- [x] Create `.env.example` documenting all required environment variables (pre-filled sender/recipient; includes OpenAI key as optional)
+- [x] Create `SignalFeedApplication.java` with `@SpringBootApplication` and `@EnableScheduling` *(renamed from `TrendTrackerApplication` to match project name; package `com.signalfeed`)*
+- [x] Verify application starts with `./mvnw spring-boot:run` — clean boot confirmed
+- [x] **Added (not in original plan):** Provider decoupling via Maven profiles (`-Pantropic` default, `-Popenai`); `app.ai.web-search-tool-name` property externalised per profile; Spring AI `ChatClient` used as sole abstraction in code
+- [x] **Added (not in original plan):** `.gitignore` covering build output, secrets, IDE files, OS artifacts, logs
+- [x] **Added (not in original plan):** Maven wrapper (`mvnw` / `mvnw.cmd`) generated for Maven 3.9.9
+- [x] **Added (not in original plan):** JaCoCo plugin configured to enforce ≥ 80% line and branch coverage on `./mvnw verify`
 
 ---
 
 #### Task Group 2 — Model
 
-- [ ] Create `AITool.java` as a Java `record` with fields: `name`, `category`, `description`, `pros` (List\<String\>), `cons` (List\<String\>), `link`
-- [ ] Annotate fields with Jackson annotations for exact JSON key mapping
-- [ ] Create `AIToolsFetchException.java` as a runtime exception with a message and optional cause
+- [x] Create `AITool.java` as a Java `record` with fields: `name`, `category`, `description`, `pros` (List\<String\>), `cons` (List\<String\>), `link` — also annotated with `@JsonIgnoreProperties(ignoreUnknown = true)` for robustness against unexpected fields from Claude
+- [x] Annotate fields with `@JsonProperty` Jackson annotations for exact JSON key mapping
+- [x] Create `AIToolsFetchException.java` as a runtime exception with a message and optional cause
+- [x] **Tests:** `AIToolTest` (16 tests — constructor, accessors, equality/hashCode, toString, full Jackson deserialization, null link, unknown-field tolerance, missing link, empty lists, parametrized categories, round-trip); `AIToolsFetchExceptionTest` (5 tests — both constructors, is-RuntimeException, cause chain, throw-and-catch)
 
 ---
 
 #### Task Group 3 — Configuration Beans
 
-- [ ] Create `AppConfig.java`
-  - [ ] Define `ChatClient` bean: inject `ChatClient.Builder` from Spring AI, configure Anthropic options
-  - [ ] Verify Spring AI auto-configuration picks up `ANTHROPIC_API_KEY` from `application.yml`
-  - [ ] Define `JavaMailSender` bean (or rely on Spring Boot's mail auto-configuration — confirm which approach Spring Boot 3.x uses)
+- [x] Create `AppConfig.java`
+  - [x] Define `ChatClient` bean: injects `ChatClient.Builder` (Spring AI auto-configures the concrete implementation based on the active Maven/Spring profile — zero provider-specific code in `AppConfig`)
+  - [x] Verify Spring AI auto-configuration picks up provider API key from `application-<profile>.yml` — confirmed
+  - [x] `JavaMailSender` bean — confirmed Spring Boot 3.x auto-configures `JavaMailSenderImpl` from `spring.mail.*` properties; no manual bean definition needed
+- [x] **Tests:** `AppConfigTest` (2 tests — builder result returned, `build()` called exactly once; uses Mockito mocks of `ChatClient.Builder` and `ChatClient`)
 
 ---
 
 #### Task Group 4 — Prompt Builder
 
-- [ ] Create `PromptBuilder.java` (`@Component`)
-  - [ ] Implement `buildSystemPrompt()` — returns the system prompt string as specified in §2.8
-  - [ ] Implement `buildUserPrompt()` — accepts `LocalDate`, returns formatted user prompt string
-- [ ] Unit test `PromptBuilder`
-  - [ ] Assert system prompt contains the JSON schema fields
-  - [ ] Assert user prompt contains today's date
+- [x] Create `PromptBuilder.java` (`@Component`)
+  - [x] Implement `buildSystemPrompt()` — returns system prompt as a Java text block; includes JSON schema, field rules, and explicit "ONLY JSON" instruction
+  - [x] Implement `buildUserPrompt(LocalDate)` — formats date as `"EEEE, MMMM d, yyyy"` with `Locale.ENGLISH`; `web-search-tool-name` remains in config, not the prompt
+- [x] Unit test `PromptBuilder`
+  - [x] Assert system prompt contains all 6 JSON schema fields
+  - [x] Assert system prompt requires JSON-only response, prohibits markdown fences, specifies exactly 3 pros and 2 cons, mentions web search and social platforms
+  - [x] Assert user prompt contains fully formatted date (day-of-week, month, day, year)
+  - [x] Assert user prompt instructs web search and JSON-only return
+  - [x] Parametrized tests: all 7 days of week, 5 different months, leap day (2024-02-29), divergence between two dates
+  - [x] **Tests:** `PromptBuilderTest` (28 tests total)
 
 ---
 
@@ -628,4 +638,4 @@ This is the final milestone that brings the MVP all the way to the extensible pl
 
 ---
 
-*Last updated: initial draft. To be revised after MVP observation period.*
+*Last updated: 2026-06-17. Task Groups 1–4 complete (51 tests, ≥ 80% coverage). Task Groups 5–9 pending.*
