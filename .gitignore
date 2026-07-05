@@ -10,6 +10,7 @@ org/
 .env
 *.env
 !.env.example
+set-env.sh
 
 # ── Local config overrides ────────────────────────────────────────────────────
 application-local.yml

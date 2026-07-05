@@ -10,6 +10,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -22,6 +24,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 class AIToolsServiceTest {
 
     // ── Mocks ────────────────────────────────────────────────────────────────
@@ -54,9 +57,13 @@ class AIToolsServiceTest {
         service = new AIToolsService(chatClient, promptBuilder, new ObjectMapper());
         ReflectionTestUtils.setField(service, "webSearchToolName", "web_search_20250305");
 
-        // Default prompt-builder stubs
+        // Default prompt-builder stubs (single-tool)
         when(promptBuilder.buildSystemPrompt()).thenReturn(SYSTEM_PROMPT);
         when(promptBuilder.buildUserPrompt(any(LocalDate.class))).thenReturn(USER_PROMPT);
+
+        // Default prompt-builder stubs (multi-tool)
+        when(promptBuilder.buildSystemPromptForMultiple()).thenReturn(SYSTEM_PROMPT);
+        when(promptBuilder.buildUserPromptForMultiple(any(LocalDate.class))).thenReturn(USER_PROMPT);
 
         // Wire the fluent ChatClient chain
         when(chatClient.prompt()).thenReturn(requestSpec);
@@ -362,6 +369,105 @@ class AIToolsServiceTest {
         verify(callResponseSpec, times(1)).content();
     }
 
+    // ── fetchTrendingTools — happy path ─────────────────────────────────────
+
+    @Test
+    void fetchTrendingTools_validArray_returnsFiveTools() {
+        when(callResponseSpec.content()).thenReturn(VALID_JSON_ARRAY);
+
+        List<AITool> tools = service.fetchTrendingTools();
+
+        assertThat(tools).hasSize(5);
+        assertThat(tools.get(0).name()).isEqualTo("Perplexity");
+        assertThat(tools.get(4).name()).isEqualTo("ElevenLabs");
+    }
+
+    @Test
+    void fetchTrendingTools_arrayWithPreamble_extractsSuccessfully() {
+        String withPreamble = "Here are the 5 trending tools:\n" + VALID_JSON_ARRAY;
+        when(callResponseSpec.content()).thenReturn(withPreamble);
+
+        List<AITool> tools = service.fetchTrendingTools();
+
+        assertThat(tools).hasSize(5);
+    }
+
+    @Test
+    void fetchTrendingTools_arrayInMarkdownFences_extractsSuccessfully() {
+        String fenced = "```json\n" + VALID_JSON_ARRAY + "\n```";
+        when(callResponseSpec.content()).thenReturn(fenced);
+
+        List<AITool> tools = service.fetchTrendingTools();
+
+        assertThat(tools).hasSize(5);
+    }
+
+    // ── fetchTrendingTools — error paths ─────────────────────────────────────
+
+    @Test
+    void fetchTrendingTools_emptyResponse_throwsAIToolsFetchException() {
+        when(callResponseSpec.content()).thenReturn("");
+
+        assertThatThrownBy(() -> service.fetchTrendingTools())
+                .isInstanceOf(AIToolsFetchException.class)
+                .hasMessageContaining("empty");
+    }
+
+    @Test
+    void fetchTrendingTools_noJsonArray_throwsAIToolsFetchException() {
+        when(callResponseSpec.content()).thenReturn("I found some great tools but forgot to format them.");
+
+        assertThatThrownBy(() -> service.fetchTrendingTools())
+                .isInstanceOf(AIToolsFetchException.class)
+                .hasMessageContaining("No JSON array found");
+    }
+
+    @Test
+    void fetchTrendingTools_malformedArray_throwsAIToolsFetchException() {
+        when(callResponseSpec.content()).thenReturn("[{\"name\": \"Tool\", broken}]");
+
+        assertThatThrownBy(() -> service.fetchTrendingTools())
+                .isInstanceOf(AIToolsFetchException.class);
+    }
+
+    @Test
+    void fetchTrendingTools_missingFieldInOneElement_throwsAIToolsFetchException() {
+        // Second element has no category
+        String partialArray = """
+                [
+                  {"name":"T1","category":"C1","description":"D1","pros":["P1","P2","P3"],"cons":["C1","C2"],"link":null},
+                  {"name":"T2","description":"D2","pros":["P1","P2","P3"],"cons":["C1","C2"],"link":null},
+                  {"name":"T3","category":"C3","description":"D3","pros":["P1","P2","P3"],"cons":["C1","C2"],"link":null},
+                  {"name":"T4","category":"C4","description":"D4","pros":["P1","P2","P3"],"cons":["C1","C2"],"link":null},
+                  {"name":"T5","category":"C5","description":"D5","pros":["P1","P2","P3"],"cons":["C1","C2"],"link":null}
+                ]
+                """;
+        when(callResponseSpec.content()).thenReturn(partialArray);
+
+        assertThatThrownBy(() -> service.fetchTrendingTools())
+                .isInstanceOf(AIToolsFetchException.class)
+                .hasMessageContaining("category");
+    }
+
+    @Test
+    void fetchTrendingTools_chatClientThrows_wrapsException() {
+        when(requestSpec.call()).thenThrow(new RuntimeException("API timeout"));
+
+        assertThatThrownBy(() -> service.fetchTrendingTools())
+                .isInstanceOf(AIToolsFetchException.class)
+                .hasMessageContaining("ChatClient call failed");
+    }
+
+    @Test
+    void fetchTrendingTools_usesMultiplePrompts() {
+        when(callResponseSpec.content()).thenReturn(VALID_JSON_ARRAY);
+
+        service.fetchTrendingTools();
+
+        verify(promptBuilder).buildSystemPromptForMultiple();
+        verify(promptBuilder).buildUserPromptForMultiple(any(LocalDate.class));
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     /**
@@ -377,4 +483,20 @@ class AIToolsServiceTest {
             throw new RuntimeException("Test helper serialization failed", e);
         }
     }
+
+    // Valid 5-tool JSON array fixture
+    private static final String VALID_JSON_ARRAY = """
+            [
+              {"name":"Perplexity","category":"Research","description":"AI-powered search engine",
+               "pros":["Fast","Cited","Free tier"],"cons":["Hallucinations","Limited API"],"link":"https://perplexity.ai"},
+              {"name":"Cursor","category":"Coding","description":"AI code editor",
+               "pros":["Completions","Tab accept","Multi-file"],"cons":["Paid tier","Cloud dep"],"link":null},
+              {"name":"Midjourney","category":"Image Generation","description":"AI image generator",
+               "pros":["Quality","Style","Fast"],"cons":["Subscription","No free tier"],"link":"https://midjourney.com"},
+              {"name":"Notion AI","category":"Productivity","description":"AI writing in Notion",
+               "pros":["Integrated","Easy","Templates"],"cons":["Subscription","Limited"],"link":null},
+              {"name":"ElevenLabs","category":"Audio","description":"AI voice synthesis",
+               "pros":["Realistic","Multi-lang","API"],"cons":["Expensive","Quota limits"],"link":"https://elevenlabs.io"}
+            ]
+            """;
 }

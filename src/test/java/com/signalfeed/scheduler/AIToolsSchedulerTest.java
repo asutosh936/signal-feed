@@ -19,22 +19,17 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class AIToolsSchedulerTest {
 
-    // ── Mocks ─────────────────────────────────────────────────────────────────
-
     @Mock private AIToolsService aiToolsService;
     @Mock private EmailService emailService;
 
     private AIToolsScheduler scheduler;
 
-    // ── Fixtures ─────────────────────────────────────────────────────────────
-
-    private static final AITool SAMPLE_TOOL = new AITool(
-            "Perplexity",
-            "Research",
-            "AI-powered search engine with cited sources",
-            List.of("Fast answers", "Cited sources", "Free tier"),
-            List.of("Occasional hallucinations", "Limited API access"),
-            "https://perplexity.ai"
+    private static final List<AITool> FIVE_TOOLS = List.of(
+            new AITool("Perplexity","Research","AI search",List.of("P1","P2","P3"),List.of("C1","C2"),"https://perplexity.ai"),
+            new AITool("Cursor","Coding","AI editor",List.of("P1","P2","P3"),List.of("C1","C2"),null),
+            new AITool("Midjourney","Image Generation","AI images",List.of("P1","P2","P3"),List.of("C1","C2"),"https://midjourney.com"),
+            new AITool("Notion AI","Productivity","AI writing",List.of("P1","P2","P3"),List.of("C1","C2"),null),
+            new AITool("ElevenLabs","Audio","AI voice",List.of("P1","P2","P3"),List.of("C1","C2"),"https://elevenlabs.io")
     );
 
     @BeforeEach
@@ -42,171 +37,117 @@ class AIToolsSchedulerTest {
         scheduler = new AIToolsScheduler(aiToolsService, emailService);
     }
 
-    // ── Happy path: all 5 scheduled methods ──────────────────────────────────
+    // ── Happy path ────────────────────────────────────────────────────────────
 
     @Test
-    void run1_happyPath_fetchesToolAndSendsEmail() {
-        when(aiToolsService.fetchTrendingTool()).thenReturn(SAMPLE_TOOL);
+    void runDaily_happyPath_fetchesToolsAndSendsOneConsolidatedEmail() {
+        when(aiToolsService.fetchTrendingTools()).thenReturn(FIVE_TOOLS);
 
-        scheduler.run1();
+        scheduler.runDaily();
 
-        verify(aiToolsService, times(1)).fetchTrendingTool();
-        verify(emailService, times(1)).send(SAMPLE_TOOL);
+        verify(aiToolsService, times(1)).fetchTrendingTools();
+        verify(emailService, times(1)).sendConsolidated(FIVE_TOOLS);
     }
 
     @Test
-    void run2_happyPath_fetchesToolAndSendsEmail() {
-        when(aiToolsService.fetchTrendingTool()).thenReturn(SAMPLE_TOOL);
+    void runDaily_happyPath_doesNotCallIndividualSend() {
+        when(aiToolsService.fetchTrendingTools()).thenReturn(FIVE_TOOLS);
 
-        scheduler.run2();
+        scheduler.runDaily();
 
-        verify(aiToolsService, times(1)).fetchTrendingTool();
-        verify(emailService, times(1)).send(SAMPLE_TOOL);
+        verify(emailService, never()).send(any(AITool.class));
     }
 
     @Test
-    void run3_happyPath_fetchesToolAndSendsEmail() {
-        when(aiToolsService.fetchTrendingTool()).thenReturn(SAMPLE_TOOL);
-
-        scheduler.run3();
-
-        verify(aiToolsService, times(1)).fetchTrendingTool();
-        verify(emailService, times(1)).send(SAMPLE_TOOL);
+    void runDaily_happyPath_doesNotRethrow() {
+        when(aiToolsService.fetchTrendingTools()).thenReturn(FIVE_TOOLS);
+        assertThatCode(() -> scheduler.runDaily()).doesNotThrowAnyException();
     }
 
-    @Test
-    void run4_happyPath_fetchesToolAndSendsEmail() {
-        when(aiToolsService.fetchTrendingTool()).thenReturn(SAMPLE_TOOL);
-
-        scheduler.run4();
-
-        verify(aiToolsService, times(1)).fetchTrendingTool();
-        verify(emailService, times(1)).send(SAMPLE_TOOL);
-    }
+    // ── Fetch failure — consolidated email NOT sent ───────────────────────────
 
     @Test
-    void run5_happyPath_fetchesToolAndSendsEmail() {
-        when(aiToolsService.fetchTrendingTool()).thenReturn(SAMPLE_TOOL);
-
-        scheduler.run5();
-
-        verify(aiToolsService, times(1)).fetchTrendingTool();
-        verify(emailService, times(1)).send(SAMPLE_TOOL);
-    }
-
-    // ── Error: AIToolsFetchException — email must NOT be sent ────────────────
-
-    @Test
-    void run1_fetchThrowsAIToolsFetchException_emailIsNotSent() {
-        when(aiToolsService.fetchTrendingTool())
+    void runDaily_fetchThrowsAIToolsFetchException_consolidatedEmailNotSent() {
+        when(aiToolsService.fetchTrendingTools())
                 .thenThrow(new AIToolsFetchException("AI returned empty response"));
 
-        scheduler.run1();
+        scheduler.runDaily();
 
-        verify(emailService, never()).send(any());
+        verify(emailService, never()).sendConsolidated(any());
     }
 
     @Test
-    void run1_fetchThrowsAIToolsFetchException_doesNotRethrow() {
-        when(aiToolsService.fetchTrendingTool())
+    void runDaily_fetchThrowsAIToolsFetchException_doesNotRethrow() {
+        when(aiToolsService.fetchTrendingTools())
                 .thenThrow(new AIToolsFetchException("parse error"));
 
-        assertThatCode(() -> scheduler.run1()).doesNotThrowAnyException();
+        assertThatCode(() -> scheduler.runDaily()).doesNotThrowAnyException();
     }
 
     @Test
-    void run2_fetchThrowsAIToolsFetchException_emailIsNotSent() {
-        when(aiToolsService.fetchTrendingTool())
-                .thenThrow(new AIToolsFetchException("no JSON found"));
+    void runDaily_fetchThrowsUnexpectedException_consolidatedEmailNotSent() {
+        when(aiToolsService.fetchTrendingTools())
+                .thenThrow(new RuntimeException("network timeout"));
 
-        scheduler.run2();
+        scheduler.runDaily();
 
-        verify(emailService, never()).send(any());
+        verify(emailService, never()).sendConsolidated(any());
     }
 
-    // ── Error: EmailSendException — must not rethrow ──────────────────────────
+    @Test
+    void runDaily_fetchThrowsUnexpectedException_doesNotRethrow() {
+        when(aiToolsService.fetchTrendingTools())
+                .thenThrow(new IllegalStateException("connection refused"));
+
+        assertThatCode(() -> scheduler.runDaily()).doesNotThrowAnyException();
+    }
+
+    // ── Email failure — does not rethrow ──────────────────────────────────────
 
     @Test
-    void run1_emailThrowsEmailSendException_doesNotRethrow() {
-        when(aiToolsService.fetchTrendingTool()).thenReturn(SAMPLE_TOOL);
+    void runDaily_consolidatedEmailThrowsEmailSendException_doesNotRethrow() {
+        when(aiToolsService.fetchTrendingTools()).thenReturn(FIVE_TOOLS);
         doThrow(new EmailSendException("SMTP refused"))
-                .when(emailService).send(any());
+                .when(emailService).sendConsolidated(any());
 
-        assertThatCode(() -> scheduler.run1()).doesNotThrowAnyException();
+        assertThatCode(() -> scheduler.runDaily()).doesNotThrowAnyException();
     }
 
     @Test
-    void run3_emailThrowsEmailSendException_doesNotRethrow() {
-        when(aiToolsService.fetchTrendingTool()).thenReturn(SAMPLE_TOOL);
-        doThrow(new EmailSendException("connection timeout"))
-                .when(emailService).send(any());
-
-        assertThatCode(() -> scheduler.run3()).doesNotThrowAnyException();
-    }
-
-    // ── Error: unexpected exception from fetch — email NOT sent, no rethrow ──
-
-    @Test
-    void run1_fetchThrowsUnexpectedException_emailIsNotSent() {
-        when(aiToolsService.fetchTrendingTool())
-                .thenThrow(new RuntimeException("unexpected NPE"));
-
-        scheduler.run1();
-
-        verify(emailService, never()).send(any());
-    }
-
-    @Test
-    void run1_fetchThrowsUnexpectedException_doesNotRethrow() {
-        when(aiToolsService.fetchTrendingTool())
-                .thenThrow(new IllegalStateException("connection pool exhausted"));
-
-        assertThatCode(() -> scheduler.run1()).doesNotThrowAnyException();
-    }
-
-    // ── Error: unexpected exception from email send — no rethrow ─────────────
-
-    @Test
-    void run1_emailThrowsUnexpectedException_doesNotRethrow() {
-        when(aiToolsService.fetchTrendingTool()).thenReturn(SAMPLE_TOOL);
+    void runDaily_consolidatedEmailThrowsUnexpectedException_doesNotRethrow() {
+        when(aiToolsService.fetchTrendingTools()).thenReturn(FIVE_TOOLS);
         doThrow(new RuntimeException("unexpected failure"))
-                .when(emailService).send(any());
+                .when(emailService).sendConsolidated(any());
 
-        assertThatCode(() -> scheduler.run1()).doesNotThrowAnyException();
+        assertThatCode(() -> scheduler.runDaily()).doesNotThrowAnyException();
     }
 
     // ── Interaction verification ──────────────────────────────────────────────
 
     @Test
-    void run1_happyPath_fetchCalledExactlyOnce() {
-        when(aiToolsService.fetchTrendingTool()).thenReturn(SAMPLE_TOOL);
+    void runDaily_fetchCalledExactlyOnce() {
+        when(aiToolsService.fetchTrendingTools()).thenReturn(FIVE_TOOLS);
 
-        scheduler.run1();
+        scheduler.runDaily();
 
-        verify(aiToolsService, times(1)).fetchTrendingTool();
+        verify(aiToolsService, times(1)).fetchTrendingTools();
     }
 
     @Test
-    void run1_happyPath_sendCalledWithFetchedTool() {
-        when(aiToolsService.fetchTrendingTool()).thenReturn(SAMPLE_TOOL);
+    void runDaily_sendConsolidatedPassesExactFetchedList() {
+        when(aiToolsService.fetchTrendingTools()).thenReturn(FIVE_TOOLS);
 
-        scheduler.run1();
+        scheduler.runDaily();
 
-        verify(emailService).send(SAMPLE_TOOL);
+        verify(emailService).sendConsolidated(FIVE_TOOLS);
     }
 
     @Test
-    void runScheduled_delegatesCorrectly_allFiveRunsAreDistinct() {
-        when(aiToolsService.fetchTrendingTool()).thenReturn(SAMPLE_TOOL);
+    void runDaily_withEmptyToolList_sendConsolidatedCalledWithEmptyList() {
+        when(aiToolsService.fetchTrendingTools()).thenReturn(List.of());
 
-        scheduler.run1();
-        scheduler.run2();
-        scheduler.run3();
-        scheduler.run4();
-        scheduler.run5();
+        scheduler.runDaily();
 
-        // All 5 runs independently fetch and send
-        verify(aiToolsService, times(5)).fetchTrendingTool();
-        verify(emailService, times(5)).send(SAMPLE_TOOL);
+        verify(emailService, times(1)).sendConsolidated(List.of());
     }
 }

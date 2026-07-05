@@ -175,4 +175,95 @@ class PromptBuilderTest {
 
         assertThat(jan).isNotEqualTo(dec);
     }
+
+    // ── buildSystemPromptForMultiple ──────────────────────────────────────────
+
+    @Test
+    void buildSystemPromptForMultiple_isNotBlank() {
+        assertThat(promptBuilder.buildSystemPromptForMultiple()).isNotBlank();
+    }
+
+    @Test
+    void buildSystemPromptForMultiple_mentionsFiveTools() {
+        String prompt = promptBuilder.buildSystemPromptForMultiple();
+        assertThat(prompt).contains("5");
+    }
+
+    @Test
+    void buildSystemPromptForMultiple_requiresJsonArrayResponse() {
+        String prompt = promptBuilder.buildSystemPromptForMultiple();
+        // Must describe a JSON array (opening bracket) as the expected output
+        assertThat(prompt).containsAnyOf("JSON array", "array");
+    }
+
+    @Test
+    void buildSystemPromptForMultiple_containsAllJsonSchemaFields() {
+        String prompt = promptBuilder.buildSystemPromptForMultiple();
+        assertThat(prompt)
+                .contains("\"name\"")
+                .contains("\"category\"")
+                .contains("\"description\"")
+                .contains("\"pros\"")
+                .contains("\"cons\"")
+                .contains("\"link\"");
+    }
+
+    @Test
+    void buildSystemPromptForMultiple_requiresJsonOnlyResponse() {
+        String prompt = promptBuilder.buildSystemPromptForMultiple();
+        assertThat(prompt.toUpperCase()).contains("ONLY");
+    }
+
+    @Test
+    void buildSystemPromptForMultiple_prohibitsMarkdownFences() {
+        String prompt = promptBuilder.buildSystemPromptForMultiple();
+        assertThat(prompt).contains("markdown fences");
+    }
+
+    @Test
+    void buildSystemPromptForMultiple_isIdempotent() {
+        assertThat(promptBuilder.buildSystemPromptForMultiple())
+                .isEqualTo(promptBuilder.buildSystemPromptForMultiple());
+    }
+
+    @Test
+    void buildSystemPromptForMultiple_isDifferentFromSingleToolPrompt() {
+        assertThat(promptBuilder.buildSystemPromptForMultiple())
+                .isNotEqualTo(promptBuilder.buildSystemPrompt());
+    }
+
+    // ── buildUserPromptForMultiple ────────────────────────────────────────────
+
+    @Test
+    void buildUserPromptForMultiple_containsFormattedDate() {
+        LocalDate date = LocalDate.of(2026, 6, 18);
+        String prompt = promptBuilder.buildUserPromptForMultiple(date);
+        assertThat(prompt).contains("Thursday, June 18, 2026");
+    }
+
+    @Test
+    void buildUserPromptForMultiple_mentionsFiveTools() {
+        String prompt = promptBuilder.buildUserPromptForMultiple(LocalDate.now());
+        assertThat(prompt).contains("5");
+    }
+
+    @Test
+    void buildUserPromptForMultiple_instructsReturnJsonOnly() {
+        String prompt = promptBuilder.buildUserPromptForMultiple(LocalDate.now());
+        assertThat(prompt.toUpperCase()).contains("ONLY");
+    }
+
+    @Test
+    void buildUserPromptForMultiple_differentDatesProduceDifferentPrompts() {
+        String jan = promptBuilder.buildUserPromptForMultiple(LocalDate.of(2026, 1, 1));
+        String dec = promptBuilder.buildUserPromptForMultiple(LocalDate.of(2026, 12, 31));
+        assertThat(jan).isNotEqualTo(dec);
+    }
+
+    @Test
+    void buildUserPromptForMultiple_isDifferentFromSingleToolPrompt() {
+        LocalDate date = LocalDate.now();
+        assertThat(promptBuilder.buildUserPromptForMultiple(date))
+                .isNotEqualTo(promptBuilder.buildUserPrompt(date));
+    }
 }

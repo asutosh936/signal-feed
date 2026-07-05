@@ -96,15 +96,17 @@ export $(grep -v '^#' .env | xargs)
 ./mvnw spring-boot:run -Popenai    # OpenAI
 ```
 
-The application starts and schedules 5 daily runs (IST times):
+The application starts and schedules 5 daily runs (CST times):
 
-| Run | Time |
-|---|---|
-| Morning | 8:00 AM |
-| Mid-morning | 11:00 AM |
-| Afternoon | 2:00 PM |
-| Evening | 5:00 PM |
-| Night | 8:00 PM |
+| Run | CST | UTC (cron) |
+|---|---|---|
+| Morning | 8:00 AM | 14:00 — `0 0 14 * * *` |
+| Mid-morning | 11:00 AM | 17:00 — `0 0 17 * * *` |
+| Early afternoon | 1:00 PM | 19:00 — `0 0 19 * * *` |
+| Afternoon | 3:00 PM | 21:00 — `0 0 21 * * *` |
+| Evening | 5:00 PM | 23:00 — `0 0 23 * * *` |
+
+> **Note:** CST is UTC−6. If your server runs in a different timezone, adjust the UTC hour accordingly. During CDT (UTC−5, mid-March to early November) the emails will arrive one hour earlier in local time.
 
 ### Quick test — trigger a run in 1 minute
 

@@ -1,6 +1,7 @@
 package com.signalfeed.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.signalfeed.exception.AIToolsFetchException;
 import com.signalfeed.model.AITool;
@@ -23,11 +24,16 @@ public class AIToolsService {
 
     /**
      * Greedy dot-all pattern: matches from the first '{' to the last '}' in the
-     * response, tolerating any preamble or trailing text Claude may add despite
-     * instructions to return JSON only.
+     * response, tolerating any preamble or trailing text the model may add.
      */
     private static final Pattern JSON_OBJECT_PATTERN =
             Pattern.compile("\\{[\\s\\S]*\\}", Pattern.DOTALL);
+
+    /**
+     * Greedy dot-all pattern: matches from the first '[' to the last ']'.
+     */
+    private static final Pattern JSON_ARRAY_PATTERN =
+            Pattern.compile("\\[[\\s\\S]*\\]", Pattern.DOTALL);
 
     private final ChatClient chatClient;
     private final PromptBuilder promptBuilder;
@@ -38,11 +44,8 @@ public class AIToolsService {
      * (e.g. {@code web_search_20250305} for Anthropic).
      *
      * <p><b>NOTE:</b> Spring AI 1.0.1 does not expose a native API for passing
-     * Anthropic's server-side built-in tools (the {@code AnthropicApi.Tool} record
-     * has no {@code type} field and the string is absent from the jar). The property
-     * is retained here for observability and for future upgrade to a Spring AI
-     * version that supports built-in tools natively. Claude will therefore operate
-     * from training knowledge rather than live web search in this version.
+     * Anthropic's server-side built-in tools. The property is retained for
+     * observability and future upgrade. A {@code WARN} is logged on every run.
      */
     @Value("${app.ai.web-search-tool-name:}")
     private String webSearchToolName;
@@ -55,23 +58,23 @@ public class AIToolsService {
         this.objectMapper = objectMapper;
     }
 
+    // ── Public API ────────────────────────────────────────────────────────────
+
     /**
-     * Asks the configured AI model to find one trending AI tool and returns it
-     * as a parsed, validated {@link AITool}.
+     * Asks the AI to find one trending AI tool and returns it as a validated
+     * {@link AITool}.
      *
      * @return the trending AI tool
-     * @throws AIToolsFetchException if the model call fails, returns empty content,
-     *                               returns unparseable JSON, or omits required fields
+     * @throws AIToolsFetchException on empty response, parse failure, or missing fields
      */
     public AITool fetchTrendingTool() {
-        log.info("=== Starting trending AI tool fetch ===");
+        log.info("=== Starting single trending AI tool fetch ===");
         logWebSearchToolStatus();
 
         String systemPrompt = promptBuilder.buildSystemPrompt();
         String userPrompt   = promptBuilder.buildUserPrompt(LocalDate.now());
 
-        log.debug("System prompt ({} chars)", systemPrompt.length());
-        log.debug("User prompt: {}", userPrompt);
+        log.debug("System prompt ({} chars), User prompt: {}", systemPrompt.length(), userPrompt);
 
         String rawContent = callChatClient(systemPrompt, userPrompt);
         log.debug("Raw AI response ({} chars): {}", rawContent.length(), rawContent);
@@ -79,13 +82,45 @@ public class AIToolsService {
         String json = extractJsonObject(rawContent);
         log.debug("Extracted JSON ({} chars): {}", json.length(), json);
 
-        AITool tool = deserialize(json);
+        AITool tool = deserializeSingle(json);
         validateRequiredFields(tool, json);
 
-        log.info("=== Fetch complete — name='{}', category='{}', link='{}' ===",
+        log.info("=== Single fetch complete — name='{}', category='{}', link='{}' ===",
                 tool.name(), tool.category(),
                 tool.link() != null ? tool.link() : "(none)");
         return tool;
+    }
+
+    /**
+     * Asks the AI to find 5 trending AI tools in a single call and returns them
+     * as a validated list.
+     *
+     * @return list of 5 trending AI tools
+     * @throws AIToolsFetchException on empty response, parse failure, or missing fields
+     */
+    public List<AITool> fetchTrendingTools() {
+        log.info("=== Starting batch fetch of 5 trending AI tools ===");
+        logWebSearchToolStatus();
+
+        String systemPrompt = promptBuilder.buildSystemPromptForMultiple();
+        String userPrompt   = promptBuilder.buildUserPromptForMultiple(LocalDate.now());
+
+        log.debug("System prompt ({} chars), User prompt: {}", systemPrompt.length(), userPrompt);
+
+        String rawContent = callChatClient(systemPrompt, userPrompt);
+        log.debug("Raw AI response ({} chars): {}", rawContent.length(), rawContent);
+
+        String json = extractJsonArray(rawContent);
+        log.debug("Extracted JSON array ({} chars): {}", json.length(), json);
+
+        List<AITool> tools = deserializeList(json);
+
+        for (int i = 0; i < tools.size(); i++) {
+            validateRequiredFields(tools.get(i), "tool[" + i + "]");
+        }
+
+        log.info("=== Batch fetch complete — {} tools fetched ===", tools.size());
+        return tools;
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
@@ -94,11 +129,11 @@ public class AIToolsService {
         if (webSearchToolName != null && !webSearchToolName.isBlank()) {
             log.warn("Web-search tool '{}' is configured but Spring AI 1.0.1 does not " +
                      "natively pass Anthropic built-in tools via ChatClient. " +
-                     "Claude will use training knowledge. " +
-                     "Upgrade Spring AI or add native tool support to enable live search.",
+                     "The model will use training knowledge. " +
+                     "Upgrade Spring AI to enable live search.",
                      webSearchToolName);
         } else {
-            log.debug("No web-search tool configured; Claude will use training knowledge.");
+            log.debug("No web-search tool configured; model will use training knowledge.");
         }
     }
 
@@ -112,8 +147,7 @@ public class AIToolsService {
                     .call()
                     .content();
         } catch (Exception e) {
-            log.error("ChatClient call failed — provider={}, error='{}'",
-                    chatClient.getClass().getSimpleName(), e.getMessage(), e);
+            log.error("ChatClient call failed — error='{}'", e.getMessage(), e);
             throw new AIToolsFetchException("ChatClient call failed: " + e.getMessage(), e);
         }
 
@@ -126,22 +160,21 @@ public class AIToolsService {
         return content;
     }
 
+    /** Extracts the first JSON object from the raw response (two-attempt strategy). */
     private String extractJsonObject(String rawContent) {
-        // Attempt 1: the entire response IS valid JSON (ideal case)
         String trimmed = rawContent.strip();
         if (trimmed.startsWith("{")) {
             log.debug("Response starts with '{{'; attempting direct parse");
             try {
-                objectMapper.readTree(trimmed);   // validate structure only
-                log.debug("Direct parse succeeded — no regex extraction needed");
+                objectMapper.readTree(trimmed);
+                log.debug("Direct parse succeeded");
                 return trimmed;
             } catch (JsonProcessingException e) {
-                log.debug("Direct parse failed ({}); falling back to regex extraction", e.getMessage());
+                log.debug("Direct parse failed ({}); falling back to regex", e.getMessage());
             }
         }
 
-        // Attempt 2: extract the JSON object via regex
-        log.debug("Running regex extraction on raw response");
+        log.debug("Running regex extraction for JSON object");
         Matcher matcher = JSON_OBJECT_PATTERN.matcher(rawContent);
         if (!matcher.find()) {
             log.error("No JSON object found in AI response. Response was: {}", rawContent);
@@ -149,12 +182,39 @@ public class AIToolsService {
         }
 
         String extracted = matcher.group();
-        log.debug("Regex extraction succeeded ({} chars extracted from {} total)",
+        log.debug("Regex extraction succeeded ({} chars from {} total)",
                 extracted.length(), rawContent.length());
         return extracted;
     }
 
-    private AITool deserialize(String json) {
+    /** Extracts the first JSON array from the raw response (two-attempt strategy). */
+    private String extractJsonArray(String rawContent) {
+        String trimmed = rawContent.strip();
+        if (trimmed.startsWith("[")) {
+            log.debug("Response starts with '['; attempting direct array parse");
+            try {
+                objectMapper.readTree(trimmed);
+                log.debug("Direct array parse succeeded");
+                return trimmed;
+            } catch (JsonProcessingException e) {
+                log.debug("Direct array parse failed ({}); falling back to regex", e.getMessage());
+            }
+        }
+
+        log.debug("Running regex extraction for JSON array");
+        Matcher matcher = JSON_ARRAY_PATTERN.matcher(rawContent);
+        if (!matcher.find()) {
+            log.error("No JSON array found in AI response. Response was: {}", rawContent);
+            throw new AIToolsFetchException("No JSON array found in AI response");
+        }
+
+        String extracted = matcher.group();
+        log.debug("Regex extraction succeeded ({} chars from {} total)",
+                extracted.length(), rawContent.length());
+        return extracted;
+    }
+
+    private AITool deserializeSingle(String json) {
         log.debug("Deserializing JSON to AITool");
         try {
             AITool tool = objectMapper.readValue(json, AITool.class);
@@ -166,8 +226,24 @@ public class AIToolsService {
         }
     }
 
-    private void validateRequiredFields(AITool tool, String json) {
-        log.debug("Validating required fields on AITool");
+    private List<AITool> deserializeList(String json) {
+        log.debug("Deserializing JSON array to List<AITool>");
+        try {
+            List<AITool> tools = objectMapper.readValue(json, new TypeReference<List<AITool>>() {});
+            if (tools == null || tools.isEmpty()) {
+                log.error("AI returned an empty tool list");
+                throw new AIToolsFetchException("AI returned an empty tool list");
+            }
+            log.debug("Deserialization succeeded — {} tools", tools.size());
+            return tools;
+        } catch (JsonProcessingException e) {
+            log.error("JSON array deserialization failed — error='{}', json='{}'", e.getMessage(), json, e);
+            throw new AIToolsFetchException("Failed to parse AI response as tool list: " + e.getMessage(), e);
+        }
+    }
+
+    private void validateRequiredFields(AITool tool, String context) {
+        log.debug("Validating required fields for {}", context);
         List<String> missing = new ArrayList<>();
 
         if (isBlank(tool.name()))        missing.add("name");
@@ -177,12 +253,12 @@ public class AIToolsService {
         if (isEmpty(tool.cons()))        missing.add("cons");
 
         if (!missing.isEmpty()) {
-            log.error("AITool is missing required fields: {} — json='{}'", missing, json);
+            log.error("AITool [{}] is missing required fields: {}", context, missing);
             throw new AIToolsFetchException("AITool missing required fields: " + missing);
         }
 
-        log.debug("All required fields present — pros={}, cons={}",
-                tool.pros().size(), tool.cons().size());
+        log.debug("All required fields present for {} — pros={}, cons={}",
+                context, tool.pros().size(), tool.cons().size());
     }
 
     private static boolean isBlank(String value) {

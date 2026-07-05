@@ -1,4 +1,11 @@
 spring:
+  main:
+    # Spring AI pulls in spring-webflux transitively, which causes Boot to
+    # auto-detect a reactive web application type. This app is a pure scheduler
+    # with no HTTP server — setting this prevents the startup failure:
+    # Spring AI pulls in spring-webflux transitively — force servlet mode so
+    # the /api/trends REST controller is served by embedded Tomcat, not Netty.
+    web-application-type: servlet
   mail:
     host: smtp.gmail.com
     port: 465
@@ -10,19 +17,22 @@ spring:
 app:
   email:
     from: ${MAIL_USERNAME}
-    to: ${MAIL_TO}
+    # Comma-separated recipients. Override via MAIL_TO env var.
+    # e.g. MAIL_TO=alice@gmail.com,bob@gmail.com
+    to: "${MAIL_TO:ashu936@gmail.com}"
   ai:
     # Overridden per provider in application-<profile>.yml
     model: ""
-    max-tokens: 500
+    max-tokens: 2048
     # The built-in web-search tool identifier for the active provider.
     # Overridden per provider in application-<profile>.yml
     web-search-tool-name: ""
 
 scheduler:
+  timezone: America/Chicago
   cron:
-    run1: "0 30 2 * * *"
-    run2: "0 30 5 * * *"
-    run3: "0 30 8 * * *"
-    run4: "0 30 11 * * *"
-    run5: "0 30 14 * * *"
+    # Override via SIGNAL_FEED_CRON env var; default = Mon/Wed/Fri 7:30 AM CST
+    daily: "${SIGNAL_FEED_CRON:0 30 7 * * MON,WED,FRI}"
+
+server:
+  port: 8083

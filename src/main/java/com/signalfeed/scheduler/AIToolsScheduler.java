@@ -12,18 +12,17 @@ import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
- * Triggers the AI tool discovery + email dispatch pipeline at five fixed times
- * per day.
+ * Fires once daily at 11:00 AM CST (17:00 UTC), fetches 5 trending AI tools
+ * in a single AI call, then sends one spotlight email per tool.
  *
- * <p>Each {@code @Scheduled} method delegates to a shared private helper so
- * the fetch → send → log sequence is written exactly once. The run identifier
- * (e.g. {@code "run1"}) is threaded through all log lines so failures can be
- * correlated to a specific scheduled slot.
+ * <p>Individual email failures are logged and skipped — one bad send never
+ * blocks the remaining tools. The scheduler thread is never killed by an
+ * exception from this class.
  *
- * <p>All exceptions are caught and logged; none are rethrown. A failure in one
- * run slot never affects subsequent slots.
+ * <p>The same pipeline can be triggered on-demand via {@code GET /api/trends}.
  */
 @Component
 public class AIToolsScheduler {
@@ -36,85 +35,65 @@ public class AIToolsScheduler {
     public AIToolsScheduler(AIToolsService aiToolsService, EmailService emailService) {
         this.aiToolsService = aiToolsService;
         this.emailService = emailService;
-        log.info("AIToolsScheduler initialised — 5 daily runs configured");
+        log.info("AIToolsScheduler initialised — daily run at 11:00 AM CST (17:00 UTC)");
     }
 
-    // ── Scheduled entry points ────────────────────────────────────────────────
+    // ── Scheduled entry point ─────────────────────────────────────────────────
 
-    /** Run 1 — 08:00 IST (02:30 UTC) */
-    @Scheduled(cron = "${scheduler.cron.run1}")
-    public void run1() {
-        runScheduled("run1");
+    /** 11:00 AM CST = 17:00 UTC */
+    @Scheduled(cron = "${scheduler.cron.daily}", zone = "${scheduler.timezone:America/Chicago}")
+    public void runDaily() {
+        runScheduled("daily");
     }
 
-    /** Run 2 — 11:00 IST (05:30 UTC) */
-    @Scheduled(cron = "${scheduler.cron.run2}")
-    public void run2() {
-        runScheduled("run2");
-    }
-
-    /** Run 3 — 14:00 IST (08:30 UTC) */
-    @Scheduled(cron = "${scheduler.cron.run3}")
-    public void run3() {
-        runScheduled("run3");
-    }
-
-    /** Run 4 — 17:00 IST (11:30 UTC) */
-    @Scheduled(cron = "${scheduler.cron.run4}")
-    public void run4() {
-        runScheduled("run4");
-    }
-
-    /** Run 5 — 20:00 IST (14:30 UTC) */
-    @Scheduled(cron = "${scheduler.cron.run5}")
-    public void run5() {
-        runScheduled("run5");
-    }
-
-    // ── Shared pipeline ───────────────────────────────────────────────────────
+    // ── Pipeline ──────────────────────────────────────────────────────────────
 
     /**
-     * Executes the full fetch → send pipeline for one scheduled slot.
+     * Fetches 5 trending AI tools and dispatches one email per tool.
      *
-     * <p>Failure modes and their handling:
+     * <p>Failure handling:
      * <ul>
-     *   <li>{@link AIToolsFetchException} — AI call failed; email is NOT sent; failure is logged</li>
-     *   <li>{@link EmailSendException} — email delivery failed; failure is logged</li>
-     *   <li>Any other {@link Exception} — unexpected failure; failure is logged</li>
+     *   <li>{@link AIToolsFetchException} — fetch failed; no emails sent; logged</li>
+     *   <li>{@link EmailSendException} per tool — that tool's email skipped; others continue</li>
+     *   <li>Any other {@link Exception} — logged; never rethrown</li>
      * </ul>
-     * No exception is rethrown — the scheduler thread must never be killed.
      *
-     * @param runId human-readable slot identifier used in all log lines
+     * @param runId human-readable identifier threaded through all log lines
      */
     void runScheduled(String runId) {
-        log.info("=== [{}}] Scheduled run starting at {} ===", runId, LocalDateTime.now());
+        log.info("=== [{}] Scheduled run starting at {} ===", runId, LocalDateTime.now());
         LocalDateTime start = LocalDateTime.now();
 
+        // ── Fetch 5 tools ─────────────────────────────────────────────────────
+        List<AITool> tools;
         try {
-            log.debug("[{}] Fetching trending AI tool...", runId);
-            AITool tool = aiToolsService.fetchTrendingTool();
-
-            log.info("[{}] Tool fetched — name='{}', category='{}'",
-                    runId, tool.name(), tool.category());
-
-            log.debug("[{}] Sending email...", runId);
-            emailService.send(tool);
-
-            long elapsedMs = Duration.between(start, LocalDateTime.now()).toMillis();
-            log.info("=== [{}] Scheduled run complete — tool='{}', elapsed={}ms ===",
-                    runId, tool.name(), elapsedMs);
-
+            log.debug("[{}] Fetching 5 trending AI tools...", runId);
+            tools = aiToolsService.fetchTrendingTools();
+            log.info("[{}] Fetched {} tools", runId, tools.size());
         } catch (AIToolsFetchException e) {
-            log.error("[{}] Scheduled run FAILED — could not fetch trending tool: {}",
+            log.error("[{}] Scheduled run FAILED — could not fetch trending tools: {}",
                     runId, e.getMessage(), e);
-
-        } catch (EmailSendException e) {
-            log.error("[{}] Scheduled run FAILED — tool fetched but email not sent: {}",
-                    runId, e.getMessage(), e);
-
+            return;
         } catch (Exception e) {
-            log.error("[{}] Scheduled run FAILED — unexpected error: {}",
+            log.error("[{}] Scheduled run FAILED — unexpected error during fetch: {}",
+                    runId, e.getMessage(), e);
+            return;
+        }
+
+        // ── Send one consolidated email for all tools ─────────────────────────
+        try {
+            log.debug("[{}] Sending consolidated email for {} tools...", runId, tools.size());
+            emailService.sendConsolidated(tools);
+            log.info("[{}] Consolidated email sent for {} tools", runId, tools.size());
+        } catch (EmailSendException e) {
+            log.error("[{}] Scheduled run FAILED — consolidated email not sent: {}",
+                    runId, e.getMessage(), e);
+        } catch (Exception e) {
+            log.error("[{}] Scheduled run FAILED — unexpected error sending email: {}",
                     runId, e.getMessage(), e);
         }
+
+        long elapsedMs = Duration.between(start, LocalDateTime.now()).toMillis();
+        log.info("=== [{}] Scheduled run complete — {}ms elapsed ===", runId, elapsedMs);
     }
 }
